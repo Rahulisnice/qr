@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Verify — Anti-Scam Report</title>
+    <style>
+      body {
+        font-family: system-ui, Arial;
+        max-width: 720px;
+        margin: 24px auto;
+        padding: 12px;
+      }
+      video,
+      canvas {
+        width: 100%;
+        max-width: 420px;
+        border-radius: 12px;
+        background: #000;
+      }
+      .controls {
+        margin-top: 12px;
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      button {
+        padding: 10px 14px;
+        border-radius: 8px;
+        border: 1px solid #ccc;
+        background: white;
+        cursor: pointer;
+      }
+      .danger {
+        background: #ffecec;
+        border-color: #f5c6c6;
+      }
+      .small {
+        font-size: 0.9rem;
+        color: #444;
+        margin-top: 8px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Report — Anti-Scam Verification</h1>
+
+    <p>
+      This page will ask to use your <strong>front camera</strong> to take a
+      quick photo to verify a report. Your photo will only be used for
+      investigation and will be stored securely. You must explicitly consent
+      below.
+    </p>
+
+    <label>
+      <input id="consentCheckbox" type="checkbox" />
+      I consent to having my photo and optional location used for anti-scam
+      investigation.
+    </label>
+
+    <div id="consentWarning" class="small" style="color: #b33; display: none">
+      You must give consent before accessing the camera.
+    </div>
+
+    <div style="margin-top: 12px">
+      <video id="video" autoplay playsinline></video>
+      <canvas id="canvas" style="display: none"></canvas>
+    </div>
+
+    <div class="controls">
+      <button id="startBtn">Start Camera</button>
+      <button id="captureBtn" disabled>Take Photo</button>
+      <button id="sendBtn" disabled>Upload (Send)</button>
+      <button id="stopBtn" class="danger" disabled>Stop Camera</button>
+    </div>
+
+    <p class="small">
+      By uploading you confirm that you consented to this capture. If you're
+      unsure, do not upload.
+    </p>
+
+    <script>
+      const video = document.getElementById("video");
+      const canvas = document.getElementById("canvas");
+      const startBtn = document.getElementById("startBtn");
+      const captureBtn = document.getElementById("captureBtn");
+      const sendBtn = document.getElementById("sendBtn");
+      const stopBtn = document.getElementById("stopBtn");
+      const consentCheckbox = document.getElementById("consentCheckbox");
+      const consentWarning = document.getElementById("consentWarning");
+
+      let stream;
+
+      function showWarning(show) {
+        consentWarning.style.display = show ? "block" : "none";
+      }
+
+      startBtn.addEventListener("click", async () => {
+        if (!consentCheckbox.checked) {
+          showWarning(true);
+          return;
+        }
+        showWarning(false);
+
+        try {
+          // Request front camera if available
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: "user" },
+            audio: false,
+          });
+          video.srcObject = stream;
+          captureBtn.disabled = false;
+          stopBtn.disabled = false;
+        } catch (err) {
+          alert("Could not access camera: " + err.message);
+        }
+      });
+
+      captureBtn.addEventListener("click", () => {
+        // capture current frame
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        canvas.getContext("2d").drawImage(video, 0, 0);
+        canvas.style.display = "block";
+        // show captured preview in the video element by pausing
+        video.pause();
+        sendBtn.disabled = false;
+      });
+
+      stopBtn.addEventListener("click", () => {
+        if (stream) {
+          stream.getTracks().forEach((t) => t.stop());
+          stream = null;
+        }
+        video.srcObject = null;
+        captureBtn.disabled = true;
+        sendBtn.disabled = true;
+        stopBtn.disabled = true;
+      });
+
+      sendBtn.addEventListener("click", async () => {
+        if (!consentCheckbox.checked) {
+          alert("Consent required.");
+          return;
+        }
+
+        // Convert canvas to blob
+        canvas.toBlob(
+          async (blob) => {
+            // gather metadata
+            const metadata = {
+              userAgent: navigator.userAgent,
+              timestamp: new Date().toISOString(),
+              url: location.href,
+            };
+
+            // optionally get geolocation with explicit permission
+            let geo = null;
+            try {
+              const pos = await new Promise((res, rej) => {
+                navigator.geolocation.getCurrentPosition(res, rej, {
+                  timeout: 5000,
+                });
+              });
+              geo = {
+                lat: pos.coords.latitude,
+                lon: pos.coords.longitude,
+                accuracy: pos.coords.accuracy,
+              };
+            } catch (e) {
+              // user denied or not available — that's fine
+            }
+
+            const form = new FormData();
+            form.append("photo", blob, "selfie.jpg");
+            form.append("metadata", JSON.stringify({ ...metadata, geo }));
+
+            sendBtn.disabled = true;
+            sendBtn.textContent = "Uploading...";
+
+            try {
+              const resp = await fetch("/api/upload", {
+                method: "POST",
+                body: form,
+              });
+              if (!resp.ok) throw new Error(await resp.text());
+              alert(
+                "Uploaded successfully. Thank you — investigators will review it."
+              );
+            } catch (err) {
+              alert("Upload failed: " + err.message);
+              sendBtn.disabled = false;
+              sendBtn.textContent = "Upload (Send)";
+            }
+          },
+          "image/jpeg",
+          0.85
+        );
+      });
+    </script>
+  </body>
+</html>
